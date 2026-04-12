@@ -1,14 +1,35 @@
-<script>
-        // 🚨 PON AQUÍ TU URL DE CLOUDFLARE
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VTuber Mobile Interface v2</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; background: #121212; color: white; padding: 40px; margin: 0; }
+        button { font-size: 20px; padding: 20px 40px; border-radius: 12px; cursor: pointer; background: #00ff88; border: none; font-weight: bold; color: #000; box-shadow: 0 4px 15px rgba(0,255,136,0.4); }
+        button:active { transform: scale(0.95); }
+        #estado { margin-top: 30px; font-size: 18px; color: #aaa; }
+        #logBox { margin-top: 20px; background: #1e1e1e; padding: 15px; border-radius: 8px; font-family: monospace; font-size: 12px; color: #00ff88; text-align: left; height: 200px; overflow-y: auto; border: 1px solid #333; }
+    </style>
+</head>
+<body>
+    <h2>🎙️ Departamento de Voz Móvil</h2>
+    <p style="color: #00ff88; font-size: 12px;">Versión: 2.0 - Cola de Audio Activa</p>
+    <button id="btnConectar">CONECTAR SISTEMA</button>
+    <p id="estado">Esperando conexión...</p>
+    
+    <div id="logBox">Esperando inicio...<br></div>
+
+    <script>
+        // 🚨 REEMPLAZA CON TU URL ACTUAL DE CLOUDFLARE
         const AWS_WSS_URL = "wss://doctor-expenses-understand-manufacture.trycloudflare.com";
         
         let wsAWS;
         let audioContext;
         let ticketId = 0;
         let tiempoUltimaFrase = Date.now();
-        let recon = null;
         
-        // 👈 LA SOLUCIÓN: El vigilante de la fila de audio
+        // El reloj de la cola de audio
         let nextPlayTime = 0; 
 
         function log(msg) {
@@ -18,42 +39,48 @@
         }
 
         document.getElementById('btnConectar').addEventListener('click', async () => {
-            document.getElementById('estado').innerText = "Conectando al puente AWS...";
-            document.getElementById('estado').style.color = "#ffaa00";
+            log("Iniciando motor de audio...");
             
+            // Creamos el contexto de audio a 24kHz (Igual que tu Inworld)
             audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+            
+            // Forzamos el resume (Chrome Mobile lo requiere)
+            if (audioContext.state === 'suspended') {
+                await audioContext.resume();
+            }
+
             wsAWS = new WebSocket(AWS_WSS_URL);
             
             wsAWS.onopen = () => {
-                document.getElementById('estado').innerText = "🟢 Sistema Enlazado. ¡Habla!";
+                document.getElementById('estado').innerText = "🟢 Sistema Enlazado";
                 document.getElementById('estado').style.color = "#00ff88";
-                log("Conexión WSS establecida con AWS.");
+                log("✅ Conexión establecida con AWS.");
+                log("🚀 Sistema de cola de audio v2 listo.");
                 iniciarEscucha();
             };
 
             wsAWS.onmessage = async (event) => {
                 const mensaje = JSON.parse(event.data);
                 if (mensaje.tipo === 'audio') {
-                    log("🔊 Chunk recibido (Encolando...)");
                     reproducirAudioBase64(mensaje.payload);
                 }
             };
 
             wsAWS.onclose = () => {
-                document.getElementById('estado').innerText = "🔴 Desconectado de AWS";
+                document.getElementById('estado').innerText = "🔴 Desconectado";
                 document.getElementById('estado').style.color = "#ff4444";
-                log("Error: Conexión cerrada.");
+                log("⚠️ Conexión cerrada.");
             };
         });
 
         function iniciarEscucha() {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             if (!SpeechRecognition) {
-                log("⚠️ Tu navegador no soporta SpeechRecognition. Usa Chrome.");
+                log("❌ Error: Navegador no compatible.");
                 return;
             }
 
-            recon = new SpeechRecognition();
+            const recon = new SpeechRecognition();
             recon.continuous = true;
             recon.interimResults = false;
             recon.lang = 'es-ES';
@@ -79,36 +106,49 @@
 
             recon.onend = () => recon.start(); 
             recon.start();
-            log("Micrófono abierto y capturando...");
+            log("🎙️ Micrófono activo.");
         }
 
         async function reproducirAudioBase64(base64String) {
-            const binaryString = window.atob(base64String);
-            const len = binaryString.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-            }
-            
-            const int16Array = new Int16Array(bytes.buffer);
-            const float32Array = new Float32Array(int16Array.length);
-            for (let i = 0; i < int16Array.length; i++) {
-                float32Array[i] = int16Array[i] / 32768.0; 
-            }
+            try {
+                const binaryString = window.atob(base64String);
+                const len = binaryString.length;
+                const bytes = new Uint8Array(len);
+                for (let i = 0; i < len; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                
+                const int16Array = new Int16Array(bytes.buffer);
+                const float32Array = new Float32Array(int16Array.length);
+                for (let i = 0; i < int16Array.length; i++) {
+                    float32Array[i] = int16Array[i] / 32768.0; 
+                }
 
-            const audioBuffer = audioContext.createBuffer(1, float32Array.length, 24000);
-            audioBuffer.getChannelData(0).set(float32Array);
+                const audioBuffer = audioContext.createBuffer(1, float32Array.length, 24000);
+                audioBuffer.getChannelData(0).set(float32Array);
 
-            const source = audioContext.createBufferSource();
-            source.buffer = audioBuffer;
-            source.connect(audioContext.destination);
-            
-            // 👈 LA MAGIA DE LA COLA: Si el audioContext ya avanzó, emparejamos el tiempo.
-            // Si Inworld manda chunks, los ponemos uno detrás del otro perfectamente.
-            if (nextPlayTime < audioContext.currentTime) {
-                nextPlayTime = audioContext.currentTime;
+                const source = audioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(audioContext.destination);
+                
+                // --- LÓGICA DE COLA ESTRICTA ---
+                const currentTime = audioContext.currentTime;
+                
+                // Si el tiempo programado ya pasó, lo reseteamos al tiempo actual
+                if (nextPlayTime < currentTime) {
+                    nextPlayTime = currentTime;
+                }
+
+                // Programamos el inicio del chunk justo donde termina el anterior
+                source.start(nextPlayTime);
+                
+                // Actualizamos cuándo debe empezar el siguiente pedazo
+                nextPlayTime += audioBuffer.duration;
+                
+            } catch (e) {
+                console.error("Error al procesar chunk de audio", e);
             }
-            source.start(nextPlayTime);
-            nextPlayTime += audioBuffer.duration;
         }
     </script>
+</body>
+</html>
