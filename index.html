@@ -21,15 +21,13 @@
     <div id="logBox">Esperando inicio...<br></div>
 
     <script>
-        // 🚨 REEMPLAZA CON TU URL ACTUAL DE CLOUDFLARE
-        const AWS_WSS_URL = "wss://doctor-expenses-understand-manufacture.trycloudflare.com";
+        // ✅ URL ACTUALIZADA CON TU TÚNEL ETERNO
+        const AWS_WSS_URL = "wss://footage-downloaded-trades-earliest.trycloudflare.com";
         
         let wsAWS;
         let audioContext;
         let ticketId = 0;
         let tiempoUltimaFrase = Date.now();
-        
-        // El reloj de la cola de audio
         let nextPlayTime = 0; 
 
         function log(msg) {
@@ -41,10 +39,8 @@
         document.getElementById('btnConectar').addEventListener('click', async () => {
             log("Iniciando motor de audio...");
             
-            // Creamos el contexto de audio a 24kHz (Igual que tu Inworld)
             audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
             
-            // Forzamos el resume (Chrome Mobile lo requiere)
             if (audioContext.state === 'suspended') {
                 await audioContext.resume();
             }
@@ -131,18 +127,13 @@
                 source.buffer = audioBuffer;
                 source.connect(audioContext.destination);
                 
-                // --- LÓGICA DE COLA ESTRICTA ---
                 const currentTime = audioContext.currentTime;
                 
-                // Si el tiempo programado ya pasó, lo reseteamos al tiempo actual
                 if (nextPlayTime < currentTime) {
                     nextPlayTime = currentTime;
                 }
 
-                // Programamos el inicio del chunk justo donde termina el anterior
                 source.start(nextPlayTime);
-                
-                // Actualizamos cuándo debe empezar el siguiente pedazo
                 nextPlayTime += audioBuffer.duration;
                 
             } catch (e) {
