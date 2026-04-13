@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VTuber Mobile Interface v3.3</title>
+    <title>VTuber Mobile - AudioWorklet Core</title>
     <style>
         body { font-family: sans-serif; text-align: center; background: #121212; color: white; padding: 40px; margin: 0; }
         button { font-size: 20px; padding: 20px 40px; border-radius: 12px; cursor: pointer; background: #00ff88; border: none; font-weight: bold; color: #000; box-shadow: 0 4px 15px rgba(0,255,136,0.4); margin-top: 20px; }
@@ -14,21 +14,19 @@
     </style>
 </head>
 <body>
-    <h2>🎙️ Departamento de Voz Móvil</h2>
-    <p style="color: #00ff88; font-size: 12px;">Versión: 3.3 - Motor: AssemblyAI (AWS Inyección Directa)</p>
+    <h2>🎙️ Walkie-Talkie Pro (Worklet)</h2>
+    <p style="color: #00ff88; font-size: 12px;">Arquitectura: AWS Core + AudioWorklet Thread</p>
     
-    <button id="btnConectar">CONECTAR SISTEMA</button>
+    <button id="btnConectar">CONECTAR A LA BASE</button>
     <p id="estado">Esperando conexión...</p>
     
-    <div id="logBox">Esperando inicio...<br></div>
+    <div id="logBox">Sistemas en espera...<br></div>
 
     <script>
         const AWS_WSS_URL = "wss://footage-downloaded-trades-earliest.trycloudflare.com";
         
-        let wsAWS, wsAAI;
+        let wsAWS;
         let playContext, captureContext;
-        let ticketId = 0;
-        let tiempoUltimaFrase = Date.now();
         let nextPlayTime = 0; 
 
         function log(msg) {
@@ -37,9 +35,31 @@
             box.scrollTop = box.scrollHeight;
         }
 
+        // --- EL TRUCO DEL AUDIO WORKLET EN UN SOLO ARCHIVO ---
+        const workletCode = `
+            class MicProcessor extends AudioWorkletProcessor {
+                process(inputs) {
+                    const input = inputs[0];
+                    if (input && input.length > 0) {
+                        const channelData = input[0];
+                        const pcmData = new Int16Array(channelData.length);
+                        for (let i = 0; i < channelData.length; i++) {
+                            pcmData[i] = Math.max(-1, Math.min(1, channelData[i])) * 0x7FFF;
+                        }
+                        this.port.postMessage(pcmData.buffer);
+                    }
+                    return true;
+                }
+            }
+            registerProcessor('mic-processor', MicProcessor);
+        `;
+        const workletBlob = new Blob([workletCode], { type: 'application/javascript' });
+        const workletUrl = URL.createObjectURL(workletBlob);
+        // -----------------------------------------------------
+
         document.getElementById('btnConectar').addEventListener('click', async () => {
             document.getElementById('btnConectar').disabled = true;
-            log("Iniciando motores de audio...");
+            log("Iniciando motores de alto rendimiento...");
             
             playContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
             if (playContext.state === 'suspended') await playContext.resume();
@@ -47,113 +67,63 @@
             wsAWS = new WebSocket(AWS_WSS_URL);
             
             wsAWS.onopen = () => {
-                log("✅ Conexión establecida con AWS.");
-                document.getElementById('estado').innerText = "AWS Enlazado. Esperando Credenciales...";
+                log("✅ Conectado a AWS.");
+                document.getElementById('estado').innerText = "🟢 SISTEMA EN LÍNEA";
+                document.getElementById('estado').style.color = "#00ff88";
+                iniciarMicrofono();
             };
 
             wsAWS.onmessage = async (event) => {
                 const mensaje = JSON.parse(event.data);
-                
-                // AWS nos mandó la llave en privado
-                if (mensaje.tipo === 'llave_maestra') {
-                    log("🔑 Llave recibida. Abriendo IA...");
-                    iniciarAssemblyAI(mensaje.payload);
-                }
-
-                if (mensaje.tipo === 'audio') {
-                    reproducirAudioBase64(mensaje.payload);
-                }
+                if (mensaje.tipo === 'log') log(mensaje.payload);
+                if (mensaje.tipo === 'audio') reproducirAudioBase64(mensaje.payload);
             };
 
             wsAWS.onerror = () => log("❌ Falló la conexión con AWS.");
             wsAWS.onclose = () => {
-                document.getElementById('estado').innerText = "🔴 Desconectado de AWS";
+                document.getElementById('estado').innerText = "🔴 Base Desconectada";
                 document.getElementById('estado').style.color = "#ff4444";
-                log("⚠️ Conexión AWS cerrada.");
                 document.getElementById('btnConectar').disabled = false;
             };
         });
 
-        function iniciarAssemblyAI(apiKey) {
-            log("Conectando a AssemblyAI...");
-            
-            // EL FIX: La llave viaja incrustada directamente en la URL para que no nos cierren la puerta
-            const urlConLlave = `wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000&token=${apiKey}`;
-            wsAAI = new WebSocket(urlConLlave);
-
-            wsAAI.onopen = () => {
-                document.getElementById('estado').innerText = "🟢 SISTEMA ONLINE - ¡Habla!";
-                document.getElementById('estado').style.color = "#00ff88";
-                log("🚀 AssemblyAI conectado exitosamente.");
-                iniciarMicrofono();
-            };
-
-            wsAAI.onmessage = (event) => {
-                const res = JSON.parse(event.data);
-                
-                if (res.error) {
-                    log("❌ Error AAI: " + res.error);
-                    return;
-                }
-
-                if (res.message_type === 'FinalTranscript' && res.text) {
-                    const ahora = Date.now();
-                    const tiempoDePausa = ahora - tiempoUltimaFrase;
-
-                    log(`🎤 AAI: "${res.text}"`);
-
-                    const paquete = { ticketId: ticketId, texto: res.text, tiempoDePausa: tiempoDePausa };
-
-                    if (wsAWS && wsAWS.readyState === WebSocket.OPEN) {
-                        wsAWS.send(JSON.stringify({ tipo: 'paquete', payload: paquete }));
-                        ticketId++;
-                    }
-                    tiempoUltimaFrase = Date.now();
-                }
-            };
-
-            wsAAI.onerror = () => log("❌ Falló la conexión con AssemblyAI.");
-            wsAAI.onclose = (event) => log(`🔌 AssemblyAI desconectado. Código: ${event.code}`);
-        }
-
         async function iniciarMicrofono() {
             try {
-                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                log("🎙️ Micrófono capturando...");
+                // OJO: Dejo el EchoCancellation en TRUE. Si usas audífonos siempre, ponlo en false como dijo Claude.
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } 
+                });
+                log("🎙️ Micrófono en hilo dedicado (AudioWorklet)...");
 
                 captureContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
                 await captureContext.resume();
-
+                
+                await captureContext.audioWorklet.addModule(workletUrl);
+                
                 const source = captureContext.createMediaStreamSource(stream);
-                const processor = captureContext.createScriptProcessor(4096, 1, 1);
+                const processorNode = new AudioWorkletNode(captureContext, 'mic-processor');
 
-                source.connect(processor);
-                processor.connect(captureContext.destination);
-
-                processor.onaudioprocess = (e) => {
-                    const inputData = e.inputBuffer.getChannelData(0);
-                    const pcmData = new Int16Array(inputData.length);
-                    for (let i = 0; i < inputData.length; i++) {
-                        pcmData[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
-                    }
-
-                    if (wsAAI && wsAAI.readyState === WebSocket.OPEN) {
-                        const base64Audio = btoa(String.fromCharCode(...new Uint8Array(pcmData.buffer)));
-                        wsAAI.send(JSON.stringify({ audio_data: base64Audio }));
+                processorNode.port.onmessage = (e) => {
+                    if (wsAWS && wsAWS.readyState === WebSocket.OPEN) {
+                        const base64Audio = btoa(String.fromCharCode(...new Uint8Array(e.data)));
+                        wsAWS.send(JSON.stringify({ tipo: 'audio_mic', payload: base64Audio }));
                     }
                 };
+
+                source.connect(processorNode);
+                // No conectamos el processorNode al 'destination' para no escucharnos a nosotros mismos
+                
             } catch (err) {
                 log("❌ Error de micrófono: " + err.message);
-                alert("No se pudo acceder al micrófono.");
+                alert("Permisos de micrófono denegados.");
             }
         }
 
         async function reproducirAudioBase64(base64String) {
             try {
                 const binaryString = window.atob(base64String);
-                const len = binaryString.length;
-                const bytes = new Uint8Array(len);
-                for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
                 
                 const int16Array = new Int16Array(bytes.buffer);
                 const float32Array = new Float32Array(int16Array.length);
@@ -166,14 +136,11 @@
                 source.buffer = audioBuffer;
                 source.connect(playContext.destination);
                 
-                const currentTime = playContext.currentTime;
-                
-                if (nextPlayTime < currentTime) nextPlayTime = currentTime;
+                if (nextPlayTime < playContext.currentTime) nextPlayTime = playContext.currentTime;
                 source.start(nextPlayTime);
                 nextPlayTime += audioBuffer.duration;
-                
             } catch (e) {
-                console.error("Error al procesar chunk de audio", e);
+                console.error("Error reproduciendo", e);
             }
         }
     </script>
