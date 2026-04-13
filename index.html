@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VTuber Mobile Interface v3.1 - Assembly Pro</title>
+    <title>VTuber Mobile Interface v3.2</title>
     <style>
         body { font-family: sans-serif; text-align: center; background: #121212; color: white; padding: 40px; margin: 0; }
         button { font-size: 20px; padding: 20px 40px; border-radius: 12px; cursor: pointer; background: #00ff88; border: none; font-weight: bold; color: #000; box-shadow: 0 4px 15px rgba(0,255,136,0.4); margin-top: 20px; }
@@ -15,7 +15,7 @@
 </head>
 <body>
     <h2>🎙️ Departamento de Voz Móvil</h2>
-    <p style="color: #00ff88; font-size: 12px;">Versión: 3.1 - Motor: AssemblyAI (Tokens Seguros desde AWS)</p>
+    <p style="color: #00ff88; font-size: 12px;">Versión: 3.2 - Motor: AssemblyAI (Mensajero AWS)</p>
     
     <button id="btnConectar">CONECTAR SISTEMA</button>
     <p id="estado">Esperando conexión...</p>
@@ -23,7 +23,6 @@
     <div id="logBox">Esperando inicio...<br></div>
 
     <script>
-        // ✅ TU URL DE AWS TÚNEL ETERNO
         const AWS_WSS_URL = "wss://footage-downloaded-trades-earliest.trycloudflare.com";
         
         let wsAWS, wsAAI;
@@ -49,19 +48,18 @@
             
             wsAWS.onopen = () => {
                 log("✅ Conexión establecida con AWS.");
-                document.getElementById('estado').innerText = "AWS Enlazado. Esperando Token...";
+                document.getElementById('estado').innerText = "AWS Enlazado. Esperando Credenciales...";
             };
 
             wsAWS.onmessage = async (event) => {
                 const mensaje = JSON.parse(event.data);
                 
-                // 1. AWS nos envía el Token Seguro que generó en el backend
-                if (mensaje.tipo === 'token_aai') {
-                    log("🔑 Token temporal recibido. Abriendo IA...");
+                // AWS nos mandó la llave en privado
+                if (mensaje.tipo === 'llave_maestra') {
+                    log("🔑 Llave recibida. Abriendo IA...");
                     iniciarAssemblyAI(mensaje.payload);
                 }
 
-                // 2. AWS nos envía la voz de Inworld para reproducirla
                 if (mensaje.tipo === 'audio') {
                     reproducirAudioBase64(mensaje.payload);
                 }
@@ -76,12 +74,14 @@
             };
         });
 
-        function iniciarAssemblyAI(tokenTemporal) {
-            log("Conectando a AssemblyAI con Token...");
-            // Usamos el token directamente en la URL, que es como a AssemblyAI le gusta
-            wsAAI = new WebSocket(`wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000&token=${tokenTemporal}`);
+        function iniciarAssemblyAI(apiKey) {
+            log("Conectando a AssemblyAI...");
+            // Usamos la URL limpia
+            wsAAI = new WebSocket("wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000");
 
             wsAAI.onopen = () => {
+                // Pasamos la llave internamente como en la v3.0
+                wsAAI.send(JSON.stringify({ terminate_session: false, token: apiKey }));
                 document.getElementById('estado').innerText = "🟢 SISTEMA ONLINE - ¡Habla!";
                 document.getElementById('estado').style.color = "#00ff88";
                 log("🚀 AssemblyAI conectado exitosamente.");
@@ -96,7 +96,6 @@
                     return;
                 }
 
-                // Aquí escuchamos y mandamos a Inworld
                 if (res.message_type === 'FinalTranscript' && res.text) {
                     const ahora = Date.now();
                     const tiempoDePausa = ahora - tiempoUltimaFrase;
