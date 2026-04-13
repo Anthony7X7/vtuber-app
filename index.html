@@ -3,11 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VTuber Mobile Interface v3 - Test AAI</title>
+    <title>VTuber Mobile Interface v3.1 - Assembly Pro</title>
     <style>
         body { font-family: sans-serif; text-align: center; background: #121212; color: white; padding: 40px; margin: 0; }
-        input { width: 90%; padding: 15px; margin-bottom: 20px; border-radius: 8px; border: 1px solid #00ff88; background: #1e1e1e; color: #fff; font-size: 14px; text-align: center; }
-        button { font-size: 20px; padding: 20px 40px; border-radius: 12px; cursor: pointer; background: #00ff88; border: none; font-weight: bold; color: #000; box-shadow: 0 4px 15px rgba(0,255,136,0.4); }
+        button { font-size: 20px; padding: 20px 40px; border-radius: 12px; cursor: pointer; background: #00ff88; border: none; font-weight: bold; color: #000; box-shadow: 0 4px 15px rgba(0,255,136,0.4); margin-top: 20px; }
         button:active { transform: scale(0.95); }
         button:disabled { background: #444; color: #888; box-shadow: none; cursor: not-allowed; }
         #estado { margin-top: 30px; font-size: 18px; color: #aaa; }
@@ -16,9 +15,7 @@
 </head>
 <body>
     <h2>🎙️ Departamento de Voz Móvil</h2>
-    <p style="color: #00ff88; font-size: 12px;">Versión: 3.0 - Motor: AssemblyAI (Test Manual)</p>
-    
-    <input type="password" id="apiKey" placeholder="Pega aquí tu API Key de AssemblyAI">
+    <p style="color: #00ff88; font-size: 12px;">Versión: 3.1 - Motor: AssemblyAI (Tokens Seguros desde AWS)</p>
     
     <button id="btnConectar">CONECTAR SISTEMA</button>
     <p id="estado">Esperando conexión...</p>
@@ -42,36 +39,35 @@
         }
 
         document.getElementById('btnConectar').addEventListener('click', async () => {
-            const apiKey = document.getElementById('apiKey').value.trim();
-            if (!apiKey) {
-                alert("⚠️ Por favor, ingresa tu API Key de AssemblyAI.");
-                return;
-            }
-
             document.getElementById('btnConectar').disabled = true;
             log("Iniciando motores de audio...");
             
-            // Creamos el contexto para reproducir a Inworld (24kHz)
             playContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
-            if (playContext.state === 'suspended') {
-                await playContext.resume();
-            }
+            if (playContext.state === 'suspended') await playContext.resume();
 
             wsAWS = new WebSocket(AWS_WSS_URL);
             
             wsAWS.onopen = () => {
                 log("✅ Conexión establecida con AWS.");
-                document.getElementById('estado').innerText = "AWS Enlazado. Conectando IA...";
-                iniciarAssemblyAI(apiKey);
+                document.getElementById('estado').innerText = "AWS Enlazado. Esperando Token...";
             };
 
             wsAWS.onmessage = async (event) => {
                 const mensaje = JSON.parse(event.data);
+                
+                // 1. AWS nos envía el Token Seguro que generó en el backend
+                if (mensaje.tipo === 'token_aai') {
+                    log("🔑 Token temporal recibido. Abriendo IA...");
+                    iniciarAssemblyAI(mensaje.payload);
+                }
+
+                // 2. AWS nos envía la voz de Inworld para reproducirla
                 if (mensaje.tipo === 'audio') {
                     reproducirAudioBase64(mensaje.payload);
                 }
             };
 
+            wsAWS.onerror = () => log("❌ Falló la conexión con AWS.");
             wsAWS.onclose = () => {
                 document.getElementById('estado').innerText = "🔴 Desconectado de AWS";
                 document.getElementById('estado').style.color = "#ff4444";
@@ -80,14 +76,15 @@
             };
         });
 
-        function iniciarAssemblyAI(apiKey) {
-            log("Conectando a AssemblyAI...");
-            // Conexión cruda directa a los servidores de AAI
-            wsAAI = new WebSocket("wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000");
+        function iniciarAssemblyAI(tokenTemporal) {
+            log("Conectando a AssemblyAI con Token...");
+            // Usamos el token directamente en la URL, que es como a AssemblyAI le gusta
+            wsAAI = new WebSocket(`wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000&token=${tokenTemporal}`);
 
             wsAAI.onopen = () => {
-                log("✅ AssemblyAI conectado. Autenticando llave...");
-                wsAAI.send(JSON.stringify({ terminate_session: false, token: apiKey }));
+                document.getElementById('estado').innerText = "🟢 SISTEMA ONLINE - ¡Habla!";
+                document.getElementById('estado').style.color = "#00ff88";
+                log("🚀 AssemblyAI conectado exitosamente.");
                 iniciarMicrofono();
             };
 
@@ -98,25 +95,15 @@
                     log("❌ Error AAI: " + res.error);
                     return;
                 }
-                
-                if (res.message_type === 'SessionBegins') {
-                    document.getElementById('estado').innerText = "🟢 SISTEMA ONLINE - ¡Habla!";
-                    document.getElementById('estado').style.color = "#00ff88";
-                    log("🚀 Sesión de transcripción iniciada.");
-                }
 
-                // Equivalente exacto a tu 'turn.end_of_turn === true'
+                // Aquí escuchamos y mandamos a Inworld
                 if (res.message_type === 'FinalTranscript' && res.text) {
                     const ahora = Date.now();
                     const tiempoDePausa = ahora - tiempoUltimaFrase;
 
                     log(`🎤 AAI: "${res.text}"`);
 
-                    const paquete = {
-                        ticketId: ticketId,
-                        texto: res.text,
-                        tiempoDePausa: tiempoDePausa
-                    };
+                    const paquete = { ticketId: ticketId, texto: res.text, tiempoDePausa: tiempoDePausa };
 
                     if (wsAWS && wsAWS.readyState === WebSocket.OPEN) {
                         wsAWS.send(JSON.stringify({ tipo: 'paquete', payload: paquete }));
@@ -132,11 +119,9 @@
 
         async function iniciarMicrofono() {
             try {
-                // Pedimos permiso al usuario
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 log("🎙️ Micrófono capturando...");
 
-                // Creamos un contexto específico para capturar a 16kHz (lo que pide AAI)
                 captureContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
                 await captureContext.resume();
 
@@ -146,7 +131,6 @@
                 source.connect(processor);
                 processor.connect(captureContext.destination);
 
-                // Convertimos el audio a PCM 16-bit en tiempo real (Equivalente al SOX)
                 processor.onaudioprocess = (e) => {
                     const inputData = e.inputBuffer.getChannelData(0);
                     const pcmData = new Int16Array(inputData.length);
@@ -154,7 +138,6 @@
                         pcmData[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
                     }
 
-                    // Enviamos el pedazo de audio a AssemblyAI
                     if (wsAAI && wsAAI.readyState === WebSocket.OPEN) {
                         const base64Audio = btoa(String.fromCharCode(...new Uint8Array(pcmData.buffer)));
                         wsAAI.send(JSON.stringify({ audio_data: base64Audio }));
@@ -171,17 +154,12 @@
                 const binaryString = window.atob(base64String);
                 const len = binaryString.length;
                 const bytes = new Uint8Array(len);
-                for (let i = 0; i < len; i++) {
-                    bytes[i] = binaryString.charCodeAt(i);
-                }
+                for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
                 
                 const int16Array = new Int16Array(bytes.buffer);
                 const float32Array = new Float32Array(int16Array.length);
-                for (let i = 0; i < int16Array.length; i++) {
-                    float32Array[i] = int16Array[i] / 32768.0; 
-                }
+                for (let i = 0; i < int16Array.length; i++) float32Array[i] = int16Array[i] / 32768.0; 
 
-                // Inworld manda audio a 24kHz
                 const audioBuffer = playContext.createBuffer(1, float32Array.length, 24000);
                 audioBuffer.getChannelData(0).set(float32Array);
 
@@ -191,10 +169,7 @@
                 
                 const currentTime = playContext.currentTime;
                 
-                if (nextPlayTime < currentTime) {
-                    nextPlayTime = currentTime;
-                }
-
+                if (nextPlayTime < currentTime) nextPlayTime = currentTime;
                 source.start(nextPlayTime);
                 nextPlayTime += audioBuffer.duration;
                 
