@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VTuber Mobile Interface v3.2</title>
+    <title>VTuber Mobile Interface v3.3</title>
     <style>
         body { font-family: sans-serif; text-align: center; background: #121212; color: white; padding: 40px; margin: 0; }
         button { font-size: 20px; padding: 20px 40px; border-radius: 12px; cursor: pointer; background: #00ff88; border: none; font-weight: bold; color: #000; box-shadow: 0 4px 15px rgba(0,255,136,0.4); margin-top: 20px; }
@@ -15,7 +15,7 @@
 </head>
 <body>
     <h2>🎙️ Departamento de Voz Móvil</h2>
-    <p style="color: #00ff88; font-size: 12px;">Versión: 3.2 - Motor: AssemblyAI (Mensajero AWS)</p>
+    <p style="color: #00ff88; font-size: 12px;">Versión: 3.3 - Motor: AssemblyAI (AWS Inyección Directa)</p>
     
     <button id="btnConectar">CONECTAR SISTEMA</button>
     <p id="estado">Esperando conexión...</p>
@@ -76,12 +76,12 @@
 
         function iniciarAssemblyAI(apiKey) {
             log("Conectando a AssemblyAI...");
-            // Usamos la URL limpia
-            wsAAI = new WebSocket("wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000");
+            
+            // EL FIX: La llave viaja incrustada directamente en la URL para que no nos cierren la puerta
+            const urlConLlave = `wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000&token=${apiKey}`;
+            wsAAI = new WebSocket(urlConLlave);
 
             wsAAI.onopen = () => {
-                // Pasamos la llave internamente como en la v3.0
-                wsAAI.send(JSON.stringify({ terminate_session: false, token: apiKey }));
                 document.getElementById('estado').innerText = "🟢 SISTEMA ONLINE - ¡Habla!";
                 document.getElementById('estado').style.color = "#00ff88";
                 log("🚀 AssemblyAI conectado exitosamente.");
@@ -113,7 +113,7 @@
             };
 
             wsAAI.onerror = () => log("❌ Falló la conexión con AssemblyAI.");
-            wsAAI.onclose = () => log("🔌 AssemblyAI desconectado.");
+            wsAAI.onclose = (event) => log(`🔌 AssemblyAI desconectado. Código: ${event.code}`);
         }
 
         async function iniciarMicrofono() {
