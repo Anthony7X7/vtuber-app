@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VTuber Mobile - AudioWorklet Core</title>
+    <title>VTuber Mobile - Core Router Pro</title>
     <style>
         body { font-family: sans-serif; text-align: center; background: #121212; color: white; padding: 40px; margin: 0; }
         button { font-size: 20px; padding: 20px 40px; border-radius: 12px; cursor: pointer; background: #00ff88; border: none; font-weight: bold; color: #000; box-shadow: 0 4px 15px rgba(0,255,136,0.4); margin-top: 20px; }
@@ -14,8 +14,8 @@
     </style>
 </head>
 <body>
-    <h2>🎙️ Walkie-Talkie Pro (Worklet)</h2>
-    <p style="color: #00ff88; font-size: 12px;">Arquitectura: AWS Core + AudioWorklet Thread</p>
+    <h2>🎙️ Walkie-Talkie VTuber</h2>
+    <p style="color: #00ff88; font-size: 12px;">Arquitectura: AWS Core + AudioWorklet (Buffer 100ms)</p>
     
     <button id="btnConectar">CONECTAR A LA BASE</button>
     <p id="estado">Esperando conexión...</p>
@@ -23,6 +23,7 @@
     <div id="logBox">Sistemas en espera...<br></div>
 
     <script>
+        // ✅ TU URL DE AWS TÚNEL ETERNO
         const AWS_WSS_URL = "wss://footage-downloaded-trades-earliest.trycloudflare.com";
         
         let wsAWS;
@@ -35,18 +36,24 @@
             box.scrollTop = box.scrollHeight;
         }
 
-        // --- EL TRUCO DEL AUDIO WORKLET EN UN SOLO ARCHIVO ---
+        // --- EL TRUCO DEL AUDIO WORKLET (Optimizado a 100ms) ---
         const workletCode = `
             class MicProcessor extends AudioWorkletProcessor {
+                constructor() {
+                    super();
+                    this._buf = new Int16Array(1600); // Caja para guardar 100ms de audio a 16kHz
+                    this._pos = 0;
+                }
                 process(inputs) {
-                    const input = inputs[0];
-                    if (input && input.length > 0) {
-                        const channelData = input[0];
-                        const pcmData = new Int16Array(channelData.length);
-                        for (let i = 0; i < channelData.length; i++) {
-                            pcmData[i] = Math.max(-1, Math.min(1, channelData[i])) * 0x7FFF;
+                    const ch = inputs[0]?.[0];
+                    if (!ch) return true;
+                    for (let i = 0; i < ch.length; i++) {
+                        this._buf[this._pos++] = Math.max(-1, Math.min(1, ch[i])) * 0x7FFF;
+                        // Cuando la caja se llena (pasan 100ms), la enviamos
+                        if (this._pos === 1600) {
+                            this.port.postMessage(this._buf.buffer.slice(0));
+                            this._pos = 0;
                         }
-                        this.port.postMessage(pcmData.buffer);
                     }
                     return true;
                 }
@@ -55,7 +62,7 @@
         `;
         const workletBlob = new Blob([workletCode], { type: 'application/javascript' });
         const workletUrl = URL.createObjectURL(workletBlob);
-        // -----------------------------------------------------
+        // -----------------------------------------------------------
 
         document.getElementById('btnConectar').addEventListener('click', async () => {
             document.getElementById('btnConectar').disabled = true;
@@ -89,11 +96,11 @@
 
         async function iniciarMicrofono() {
             try {
-                // OJO: Dejo el EchoCancellation en TRUE. Si usas audífonos siempre, ponlo en false como dijo Claude.
+                // Nota: echoCancellation en true para que tu IA no se escuche a sí misma por el altavoz
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } 
                 });
-                log("🎙️ Micrófono en hilo dedicado (AudioWorklet)...");
+                log("🎙️ Micrófono en hilo dedicado (Enviando paquetes de 100ms)...");
 
                 captureContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
                 await captureContext.resume();
@@ -111,7 +118,6 @@
                 };
 
                 source.connect(processorNode);
-                // No conectamos el processorNode al 'destination' para no escucharnos a nosotros mismos
                 
             } catch (err) {
                 log("❌ Error de micrófono: " + err.message);
