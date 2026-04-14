@@ -3,32 +3,41 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>VTuber Mobile - Core Router Pro</title>
+    <title>Walkie-Talkie</title>
     <style>
         body { font-family: sans-serif; text-align: center; background: #121212; color: white; padding: 40px; margin: 0; }
-        button { font-size: 20px; padding: 20px 40px; border-radius: 12px; cursor: pointer; background: #00ff88; border: none; font-weight: bold; color: #000; box-shadow: 0 4px 15px rgba(0,255,136,0.4); margin-top: 20px; }
+        button { font-size: 20px; padding: 20px 40px; border-radius: 12px; cursor: pointer; background: #00ff88; border: none; font-weight: bold; color: #000; box-shadow: 0 4px 15px rgba(0,255,136,0.4); margin-top: 10px; }
         button:active { transform: scale(0.95); }
         button:disabled { background: #444; color: #888; box-shadow: none; cursor: not-allowed; }
-        #estado { margin-top: 30px; font-size: 18px; color: #aaa; }
-        #logBox { margin-top: 20px; background: #1e1e1e; padding: 15px; border-radius: 8px; font-family: monospace; font-size: 12px; color: #00ff88; text-align: left; height: 250px; overflow-y: auto; border: 1px solid #333; }
+        #estado { margin-top: 20px; font-size: 18px; color: #aaa; }
+        #logBox { margin-top: 20px; background: #1e1e1e; padding: 15px; border-radius: 8px; font-family: monospace; font-size: 12px; color: #00ff88; text-align: left; height: 200px; overflow-y: auto; border: 1px solid #333; }
+        
+        /* Estilos para el slider de volumen */
+        .slider-container { margin-top: 25px; background: #1e1e1e; padding: 15px; border-radius: 8px; border: 1px solid #333; }
+        input[type=range] { width: 90%; margin-top: 10px; accent-color: #00ff88; }
     </style>
 </head>
 <body>
     <h2>🎙️ Walkie-Talkie VTuber</h2>
-    <p style="color: #00ff88; font-size: 12px;">Arquitectura: AWS Core + AudioWorklet (Buffer 100ms)</p>
+    <p style="color: #00ff88; font-size: 12px;">AWS Core | 100ms | Ruido Blanco | Modo Sigilo</p>
     
     <button id="btnConectar">CONECTAR A LA BASE</button>
     <p id="estado">Esperando conexión...</p>
+
+    <div class="slider-container">
+        <label for="volumenSlider" style="color: #aaa; font-size: 14px;">Boost de Volumen: <strong id="volumenValor" style="color: #00ff88;">1.0x</strong></label><br>
+        <input type="range" id="volumenSlider" min="1.0" max="3.0" step="0.1" value="1.0">
+    </div>
     
     <div id="logBox">Sistemas en espera...<br></div>
 
     <script>
-        // ✅ TU URL DE AWS TÚNEL ETERNO
         const AWS_WSS_URL = "wss://footage-downloaded-trades-earliest.trycloudflare.com";
         
         let wsAWS;
         let playContext, captureContext;
         let nextPlayTime = 0; 
+        let amplificador; 
 
         function log(msg) {
             const box = document.getElementById('logBox');
@@ -36,12 +45,12 @@
             box.scrollTop = box.scrollHeight;
         }
 
-        // --- EL TRUCO DEL AUDIO WORKLET (Optimizado a 100ms) ---
+        // --- AUDIO WORKLET (Buffer de 100ms) ---
         const workletCode = `
             class MicProcessor extends AudioWorkletProcessor {
                 constructor() {
                     super();
-                    this._buf = new Int16Array(1600); // Caja para guardar 100ms de audio a 16kHz
+                    this._buf = new Int16Array(1600); 
                     this._pos = 0;
                 }
                 process(inputs) {
@@ -49,7 +58,6 @@
                     if (!ch) return true;
                     for (let i = 0; i < ch.length; i++) {
                         this._buf[this._pos++] = Math.max(-1, Math.min(1, ch[i])) * 0x7FFF;
-                        // Cuando la caja se llena (pasan 100ms), la enviamos
                         if (this._pos === 1600) {
                             this.port.postMessage(this._buf.buffer.slice(0));
                             this._pos = 0;
@@ -62,14 +70,46 @@
         `;
         const workletBlob = new Blob([workletCode], { type: 'application/javascript' });
         const workletUrl = URL.createObjectURL(workletBlob);
-        // -----------------------------------------------------------
+        // ----------------------------------------
 
         document.getElementById('btnConectar').addEventListener('click', async () => {
             document.getElementById('btnConectar').disabled = true;
-            log("Iniciando motores de alto rendimiento...");
+            log("Iniciando motores con protección de fondo...");
             
             playContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
             if (playContext.state === 'suspended') await playContext.resume();
+
+            // 1. INSTALAMOS EL VOLUMEN (Arranca en 1.0)
+            amplificador = playContext.createGain();
+            amplificador.gain.value = parseFloat(document.getElementById('volumenSlider').value); 
+            amplificador.connect(playContext.destination);
+
+            // Escuchamos si mueves el slider para subir o bajar el volumen en tiempo real
+            document.getElementById('volumenSlider').addEventListener('input', (e) => {
+                const nuevoVolumen = parseFloat(e.target.value);
+                amplificador.gain.value = nuevoVolumen;
+                document.getElementById('volumenValor').innerText = nuevoVolumen.toFixed(1) + 'x';
+            });
+
+            // 2. RUIDO BLANCO (Mantiene vivo a Chrome)
+            const bufferSize = playContext.sampleRate * 2;
+            const noiseBuffer = playContext.createBuffer(1, bufferSize, playContext.sampleRate);
+            const data = noiseBuffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * 0.0001; 
+            const noiseSource = playContext.createBufferSource();
+            noiseSource.buffer = noiseBuffer;
+            noiseSource.loop = true;
+            noiseSource.connect(playContext.destination); 
+            noiseSource.start();
+
+            // 3. MEDIA SESSION API (Modo Sigilo "Pasar Piola")
+            if ('mediaSession' in navigator) {
+                navigator.mediaSession.metadata = new MediaMetadata({
+                    title: 'Musica', 
+                    artist: ' '
+                });
+                navigator.mediaSession.playbackState = 'playing';
+            }
 
             wsAWS = new WebSocket(AWS_WSS_URL);
             
@@ -96,11 +136,10 @@
 
         async function iniciarMicrofono() {
             try {
-                // Nota: echoCancellation en true para que tu IA no se escuche a sí misma por el altavoz
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } 
                 });
-                log("🎙️ Micrófono en hilo dedicado (Enviando paquetes de 100ms)...");
+                log("🎙️ Micrófono activo...");
 
                 captureContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
                 await captureContext.resume();
@@ -140,7 +179,9 @@
 
                 const source = playContext.createBufferSource();
                 source.buffer = audioBuffer;
-                source.connect(playContext.destination);
+                
+                // Conectado al amplificador (que está en 1.0 por defecto)
+                source.connect(amplificador);
                 
                 if (nextPlayTime < playContext.currentTime) nextPlayTime = playContext.currentTime;
                 source.start(nextPlayTime);
